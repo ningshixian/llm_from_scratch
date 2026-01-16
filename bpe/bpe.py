@@ -1,187 +1,159 @@
+"""
+极简 BPE (Byte-Pair Encoding) 算法教学代码
+核心逻辑：
+1. 将文本转换为 UTF-8 字节流 (0-255 的整数列表)
+2. 统计相邻字节对的出现频率
+3. 将出现频率最高的字节对合并为一个新的 Token ID
+4. 重复上述步骤，直到达到预设的词表大小
+"""
 from collections import OrderedDict
-import pickle
-import re
-from tqdm import tqdm
 
-# Byte-Pair Encoding tokenization
+def get_stats(ids, counts=None):
+    """
+    统计当前 id 列表中，所有相邻“对”(pair) 的出现频率
+    例如: [1, 2, 1, 2, 3] -> (1,2):2, (2,3):1, (2,1):1
+    """
+    counts = {} if counts is None else counts
+    # zip(ids, ids[1:]) 巧妙地错位生成相邻对
+    for pair in zip(ids, ids[1:]): 
+        counts[pair] = counts.get(pair, 0) + 1
+    return counts
+
+def merge(ids, pair, idx):
+    """
+    执行合并操作：将列表中所有的 pair 替换为新的 idx
+    例如: ids=[1, 2, 3, 1, 2], pair=(1, 2), idx=256 
+    结果 -> [256, 3, 256]
+    """
+    newids = []
+    i = 0
+    while i < len(ids):
+        # 检查是否匹配到了目标 pair，且不是最后一个元素
+        if i < len(ids) - 1 and ids[i] == pair[0] and ids[i+1] == pair[1]:
+            newids.append(idx) # 替换为新 ID
+            i += 2             # 跳过已被合并的两个元素
+        else:
+            newids.append(ids[i]) # 没匹配到，保持原样
+            i += 1
+    return newids
+
+
 class BPETokenizer:
     def __init__(self):
-        self.b2i=OrderedDict() # bytes to id
-        self.i2b=OrderedDict() # id to bytes (b2i的反向映射)
-        self.next_id=0
-        
-        # special token
-        self.sp_s2i={}  # str to id
-        self.sp_i2s={}  # id to str
+        self.merges = {} # (int, int) -> int
+        self.special_tokens = {} # str -> int, e.g. {'<|endoftext|>': 100257}
+        self.vocab = self._build_vocab() # int -> bytes
     
-    # 相邻token统计
-    def _pair_stats(self,tokens,stats):
-        for i in range(len(tokens)-1):
-            new_token=tokens[i]+tokens[i+1]
-            if new_token not in stats:
-                stats[new_token]=0
-            stats[new_token]+=1
+    def _build_vocab(self):
+        # vocab is simply and deterministically derived from merges
+        vocab = {idx: bytes([idx]) for idx in range(256)}
+        for (p0, p1), idx in self.merges.items():
+            vocab[idx] = vocab[p0] + vocab[p1]
+        for special, idx in self.special_tokens.items():
+            vocab[idx] = special.encode("utf-8")
+        return vocab
+
+    def train(self, text, vocab_size, verbose=False):
+        assert vocab_size >= 256
+        num_merges = vocab_size - 256
+
+        # 【关键】将文本转为 UTF-8 字节 (0-255 的整数)
+        # 现代 LLM 不直接处理字符，而是处理字节，这样不需要担心未知字符
+        # 例如 '中' -> [228, 184, 173]
+        text_bytes = text.encode("utf-8") 
+        ids = list(text_bytes) 
+        print("Raw Bytes:", ids)
+
+        # 【核心】iteratively merge the most common pairs to create new tokens
+        merges = {}  # (int, int) -> int
+        # 初始化基础词表 0-255
+        vocab = OrderedDict({idx: bytes([idx]) for idx in range(256)}) # int -> bytes 
+        for i in range(num_merges):
+            print(f"--- Iteration {i+1}/{num_merges} ---")
+            # Step A: 统计频率
+            stats = get_stats(ids)
+            # Step B: 找出频率最高的对
+            pair = max(stats, key=stats.get)
+            print(f"Highest frequency pair: {pair} with frequency {stats.get(pair)}")
+            # Step C: 分配新的 Token ID (从 256 开始递增)     
+            idx = 256 + i
+            # Step D: 执行合并
+            ids = merge(ids, pair, idx)
+            # save the merge，用于后续的 encode/decode
+            merges[pair] = idx
+            # 递归组合字节，构建解码词表
+            # 原来的词不会剔除，而是在基础词表上累加
+            vocab[idx] = vocab[pair[0]] + vocab[pair[1]]
+            print("New Vocab Map:", list(vocab.items())[256:])
+            print("-" * 28 + "\n")
             
-    # 合并相邻token
-    def _merge_pair(self,tokens,new_token):
-        merged_tokens=[]
+            if verbose:
+                print(f"merge {i+1}/{num_merges}: {pair} -> {idx} ({vocab[idx]}) had {stats[pair]} occurrences")
         
-        i=0
-        while i<len(tokens):
-            if i+1<len(tokens) and tokens[i]+tokens[i+1]==new_token:
-                merged_tokens.append(tokens[i]+tokens[i+1])
-                i+=2
-            else:
-                merged_tokens.append(tokens[i])
-                i+=1
-        return merged_tokens
-    
-    def train(self,text_list,vocab_size):
-        # 单字节是最基础的token，初始化词表
-        for i in range(256):
-            self.b2i[bytes([i])]=i
-        self.next_id=256
-        
-        # 语料转byte
-        tokens_list=[]
-        for text in text_list:
-            tokens=[bytes([b]) for b in text.encode('utf-8')]
-            tokens_list.append(tokens)
-        
-        # 进度条
-        progress=tqdm(total=vocab_size-256)
-        
-        while True:
-            # 词表足够大了，退出训练
-            if self.next_id>=vocab_size:
-                break
-            
-            # 统计相邻token频率
-            stats={}
-            for tokens in tokens_list:
-                self._pair_stats(tokens,stats)
+        self.merges = merges # used in encode()
+        self.vocab = vocab   # used in decode()
 
-            # 没有更多相邻token, 无法生成更多token，退出训练
-            if not stats:   
-                break 
-            
-            # 合并最高频的相邻token,作为新的token加入词表
-            new_token=max(stats,key=stats.get)
+    def decode(self, ids):
+        # 将 ID 还原为字节，再解码回字符串
+        text_bytes = b"".join(self.vocab[idx] for idx in ids)
+        text = text_bytes.decode("utf-8", errors="replace")
+        return text
 
-            new_tokens_list=[]
-            for tokens in tokens_list:
-                new_tokens_list.append(self._merge_pair(tokens,new_token))
-            tokens_list=new_tokens_list
+    def encode(self, text):
+        # 编码 (Encode: Text -> IDs) 
+        text_bytes = text.encode("utf-8") # raw bytes
+        ids = list(text_bytes) # list of integers in range 0..255
+        while len(ids) >= 2:
+            stats = get_stats(ids)  # 统计pair 频率
+            # 结果取min，是指merge对应idx越小，出现的频率越高❗️
+            pair = min(stats, key=lambda p: self.merges.get(p, float("inf")))
+            # 如果找到的最小 ID 是无穷大，说明当前所有对都没学过，无法继续合并
+            if pair not in self.merges:
+                break # nothing else can be merged anymore
+            # otherwise let's merge the best pair (lowest merge index)
+            idx = self.merges[pair]
+            ids = merge(ids, pair, idx)
+        return ids
 
-            # new token加入词表
-            self.b2i[new_token]=self.next_id
-            self.next_id+=1
-            
-            # 刷新进度条
-            progress.update(1)
-        
-        self.i2b={v:k for k,v in self.b2i.items()}
 
-    # 词表大小
-    def vocab_size(self):
-        return self.next_id
-    
-    # 词表
-    def vocab(self):
-        v={}
-        v.update(self.i2b)
-        v.update({id:token.encode('utf-8') for id,token in self.sp_i2s.items()})
-        return v
-    
-    # 特殊token
-    def add_special_tokens(self,special_tokens):
-        for token in special_tokens:
-            if token not in self.sp_s2i:
-                self.sp_s2i[token]=self.next_id
-                self.sp_i2s[self.next_id]=token
-                self.next_id+=1
-    
-    def encode(self,text):
-        # 特殊token分离
-        pattern='('+'|'.join([re.escape(tok) for tok in self.sp_s2i])+')'
-        splits=re.split(pattern,text)
-        
-        # 编码结果
-        enc_ids=[]
-        enc_tokens=[]
-        for sub_text in splits:
-            if sub_text in self.sp_s2i: # 特殊token，直接对应id
-                enc_ids.append(self.sp_s2i[sub_text])
-                enc_tokens.append(sub_text.encode('utf-8'))
-            else:
-                tokens=[bytes([b]) for b in sub_text.encode('utf-8')]
-                while True:
-                    # 统计相邻token频率
-                    stats={}
-                    self._pair_stats(tokens,stats)
-                    
-                    # 选择合并后id最小的pair合并（也就是优先合并短的）
-                    new_token=None
-                    for merge_token in stats:
-                        if merge_token in self.b2i and (new_token is None or self.b2i[merge_token]<self.b2i[new_token]):
-                            new_token=merge_token
-                    
-                    # 没有可以合并的pair，退出
-                    if new_token is None:
-                        break
+# ==========================================
+# 运行演示
+# ==========================================
 
-                    # 合并pair
-                    tokens=self._merge_pair(tokens,new_token)
-                enc_ids.extend([self.b2i[tok] for tok in tokens])
-                enc_tokens.extend(tokens)
-        return enc_ids,enc_tokens
-    
-    def decode(self,ids):
-        bytes_list=[]
-        for id in ids:
-            if id in self.sp_i2s:
-                bytes_list.append(self.sp_i2s[id].encode('utf-8'))
-            else:
-                bytes_list.append(self.i2b[id])
-        return b''.join(bytes_list).decode('utf-8',errors='replace')
-    
-    def save(self,file):
-        with open(file,'wb') as fp:
-            fp.write(pickle.dumps((self.b2i,self.sp_s2i,self.next_id)))
-    
-    def load(self,file):
-        with open(file,'rb') as fp:
-            self.b2i,self.sp_s2i,self.next_id=pickle.loads(fp.read())
-        self.i2b={v:k for k,v in self.b2i.items()}
-        self.sp_i2s={v:k for k,v in self.sp_s2i.items()}
-    
-if __name__=='__main__':
-    # 加载语料
-    cn=open('dataset/train-cn.txt','r').read()
-    en=open('dataset/train-en.txt','r').read()
-    
-    # 训练
-    tokenizer=BPETokenizer()
-    tokenizer.train(text_list=[cn,en],vocab_size=5000)
-    
-    # 特殊token
-    tokenizer.add_special_tokens((['<|im_start|>','<|im_end|>','<|endoftext|>','<|padding|>']))
-    
-    # 保存
-    tokenizer.save('tokenizer.bin')
-    
-    # 还原
-    tokenizer=BPETokenizer()
-    tokenizer.load('tokenizer.bin')
-    print('vocab size:',tokenizer.vocab_size())
-    
-    # 编码
-    ids,tokens=tokenizer.encode('<|im_start|>system\nyou are a helper assistant\n<|im_end|>\n<|im_start|>user\n今天的天气\n<|im_end|><|im_start|>assistant\n')
-    print('encode:',ids,tokens)
-    
-    # 解码
-    s=tokenizer.decode(ids)
-    print('decode:',s)
-    
-    # 打印词典
-    print('vocab:',tokenizer.vocab())
+# 1. 准备数据 (包含重复模式以便压缩)
+data = "aaababb good goodx 中文测试在线中文 "
+
+# 2. 实例化并训练
+tokenizer = BPETokenizer()
+tokenizer.train(data, vocab_size=265) # 设定只学几个新词，方便观察
+
+print("\n" + "=" * 30)
+print("--- Final BPE Vocabulary Map ---")
+for token_string, freq in list(tokenizer.vocab.items())[256:]:
+    print(f"'{token_string}': {freq}")
+
+print("\n--- Learned Merge Rules (合并规则) ---")
+print("New ID | 组成成分 (ID + ID)  | 对应文本")
+print("-------|--------------------|---------")
+for (p0, p1), new_id in tokenizer.merges.items():
+    # 解码对应的文本
+    text_val = tokenizer.decode([new_id])
+    # 如果是特殊字符或换行，转义一下方便显示
+    text_val = repr(text_val) 
+    print(f"{new_id:<6} | {p0:<3} + {p1:<3}          | {text_val}")
+
+# 3. 测试 Encode (编码新文本)
+# 注意："中文" 在训练数据里出现过，应该会被压缩成新的 ID
+text = "中文 is good" 
+encoded_ids = tokenizer.encode(text)
+token_strs = [tokenizer.decode([i]) for i in encoded_ids]
+print("-" * 60)
+print(f"\n原文: {text}")
+print(f"IDs : {encoded_ids}\n")
+
+# 使用 " | " 作为边界展示
+# replace('\n', '\\n') 是为了防止换行符破坏格式
+visual_str = " | ".join([s.replace(' ', ' ') for s in token_strs])
+print(f"切分: | {visual_str} |")
+print(f"统计: 字符数 {len(text)} -> Token数 {len(encoded_ids)} (压缩率: {len(text)/len(encoded_ids):.2f}x)")
+print("-" * 60)
