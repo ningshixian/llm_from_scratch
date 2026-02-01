@@ -1,29 +1,46 @@
 import torch
 import torch.nn.functional as F
 
-# x shape: [batch, heads, seq_len, head_dim] (通常应用在 Attention 的 head 维度)
+# 预计算缓存以加速推理
 def _precompute_rotary_embeddings(seq_len, head_dim, base=10000, device=None):
-    # 预计算频率 theta
+    # 构建旋转频率 theta
     channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
     inv_freq = 1.0 / (base ** (channel_range / head_dim))
-    # stride the time steps
-    t = torch.arange(seq_len, dtype=torch.float32, device=device)
-    # calculate the rotation frequencies at each (time, channel) pair
-    freqs = torch.outer(t, inv_freq)  # [seq_len, dim/2]
     
+    # 计算不同位置的频率
+    t = torch.arange(seq_len, dtype=torch.float32, device=device)
+    freqs = torch.einsum("i,j->ij", t, inv_freq)  # 外积 [seq_len, dim/2]
+    
+    # 计算旋转角度的正弦和余弦值
     cos, sin = freqs.cos(), freqs.sin()
     cos, sin = cos.bfloat16(), sin.bfloat16() # keep them in bfloat16
     cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
     return cos, sin
 
-# RoPE 核心公式: (x * cos) + (rotate_half(x) * sin)
-def apply_rotary_emb(x, cos, sin):
-    assert x.ndim == 4  # multihead attention
-    d = x.shape[3] // 2
-    x1, x2 = x[..., :d], x[..., d:] # split up last dim into two halves
-    y1 = x1 * cos + x2 * sin # rotate pairs of dims
-    y2 = x1 * (-sin) + x2 * cos
-    return torch.cat([y1, y2], 3)
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
+    """
+    # q, k: [batch_size, seq_len, num_heads, head_dim]
+    # cos, sin: [seq_len, head_dim]
+    # position_ids: [batch_size, seq_len]
+    """
+    # multihead attention
+    batch_size, seq_length, num_heads, head_dim = q.shape
+    
+    # 根据position_ids获取对应位置的cos和sin
+    cos = cos.index_select(0, position_ids.reshape(-1)).reshape(batch_size, seq_length, 1, head_dim)
+    sin = sin.index_select(0, position_ids.reshape(-1)).reshape(batch_size, seq_length, 1, head_dim)
+    
+    # RoPE 核心公式: (x * cos) + (rotate_half(x) * sin)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    
+    return q_embed, k_embed
+
+def rotate_half(x):
+    # 旋转向量的一半维度
+    d = x.shape[-1] // 2
+    x1, x2 = x[..., :d], x[..., d:]
+    return torch.cat((-x2, x1), dim=-1)
 
 
 if __name__=='__main__':
@@ -39,7 +56,7 @@ if __name__=='__main__':
     k = torch.randn(B, T, n_head, head_dim)
 
     cos, sin = _precompute_rotary_embeddings(seq_len, head_dim)
-    q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+    q, k = apply_rotary_pos_emb(q, cos, sin), apply_rotary_pos_emb(k, cos, sin)
     print(q)
     q, k = F.rms_norm(q, (q.size(-1),)), F.rms_norm(k, (k.size(-1),)) # QK norm
     print(q)
