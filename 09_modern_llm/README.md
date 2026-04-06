@@ -1,0 +1,24 @@
+# LLM Architecture Gallery
+
+This repository contains the source model metadata for the [LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/).
+
+<br>
+
+Live gallery:
+- [sebastianraschka.com/llm-architecture-gallery](https://sebastianraschka.com/llm-architecture-gallery/)
+
+<br>
+
+Preview:
+
+![LLM Architecture Gallery](https://sebastianraschka.com/llm-architecture-gallery/images/hero/architecture-gallery-hero.webp)
+
+&nbsp;
+## Contents
+
+- [models.yml](models.yml): per-model metadata used by the gallery cards, including image paths, dates, fact-sheet fields, and related links.
+
+&nbsp;
+## Notes
+
+This repository is intended as a lightweight public data export of the gallery metadata rather than the full website implementation.

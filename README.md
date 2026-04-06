@@ -11,4 +11,13 @@
 * [SFT](https://github.com/ningshixian/llm_from_scratch/tree/main/sft)：包括**指令微调、LoRA微调.....**
 * [DPO](https://github.com/ningshixian/llm_from_scratch/tree/main/dpo)、[GRPO](https://github.com/ningshixian/llm_from_scratch/tree/main/grpo)、[KTO](https://github.com/ningshixian/llm_from_scratch/tree/main/kto)、[PPO](https://github.com/ningshixian/llm_from_scratch/tree/main/ppo)、[reinforce++](https://github.com/ningshixian/llm_from_scratch/tree/main/reinforce%2B%2B)
 * [QwenGRPO.ipynb](https://github.com/ningshixian/llm_from_scratch/blob/main/grpo/QwenGRPO.ipynb)：基于通义千问2.5的0.5B模型，复现DeepSeek R1的顿悟时刻
-* [minimind-LLM全阶段极简复现](https://github.com/ningshixian/llm_from_scratch/tree/main/%23minimind-LLM%E5%85%A8%E9%98%B6%E6%AE%B5%E6%9E%81%E7%AE%80%E5%A4%8D%E7%8E%B0%20) **：** **很 nice 的一个项目，实现了一个极简结构的 LLM，以及全阶段的训练过程：数据集清洗、预训练(Pretrain)、监督微调(SFT)、LoRA微调、直接偏好优化(DPO)、强化学习训练(RLAIF: PPO/GRPO等)**
+* [minimind-LLM全阶段极简复现](https://github.com/ningshixian/llm_from_scratch/tree/main/%23minimind-LLM%E5%85%A8%E9%98%B6%E6%AE%B5%E6%9E%81%E7%AE%80%E5%A4%8D%E7%8E%B0%20) **：** **很 nice 的一个项目，实现了一个极简结构的 LLM，以及全阶段的训练过程：数据集清洗、预训练(Pretrain)、监督微调(SFT)、LoRA微调、直接偏好优化(DPO)、强化学习训练(RLAIF: PPO/GRPO等)
+
+参考
+
+1. ~~[datawhalechina](https://github.com/datawhalechina)/[base-llm](https://github.com/datawhalechina/base-llm)~~
+2. [datawhalechina](https://github.com/datawhalechina)/[happy-llm](https://github.com/datawhalechina/happy-llm)
+3. [xiaodongguan/MA-RLHF](https://github.com/dhcode-cpp/MA-RLHF/tree/main/lecture)
+4. [rasbt](https://github.com/rasbt)/[LLMs-from-scratch](https://github.com/rasbt/LLMs-from-scratch)
+5. [labml.ai 带注释的 PyTorch 版论文实现](https://nn.labml.ai/zh/index.html)
+6. [duoan/TorchCode](https://github.com/duoan/TorchCode)
