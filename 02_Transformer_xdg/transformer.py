@@ -6,6 +6,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 torch.manual_seed(42)
 
+"""
+https://github.com/datawhalechina/happy-llm/blob/main/docs/chapter2/code/transformer.py
+https://www.k-a.in/llm7.html
+https://www.k-a.in/llm3.html
+"""
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model, n_heads, max_len=512, is_causal=False):
@@ -16,12 +21,12 @@ class MultiHeadAttention(nn.Module):
         self.n_heads = n_heads  # 对应 H
         self.d_k = d_model // n_heads # head_dim
 
-        # 定义 Q, K, V 的线性变换矩阵
+        # Linear projections for Q, K, V
         self.W_q = nn.Linear(d_model, d_model, bias=False)
         self.W_k = nn.Linear(d_model, d_model, bias=False)
         self.W_v = nn.Linear(d_model, d_model, bias=False)
-        # 输出投影层
         self.W_o = nn.Linear(d_model, d_model)
+
         self.is_causal = is_causal
 
         # 创建一个上三角矩阵，用于因果掩码
@@ -60,7 +65,7 @@ class MultiHeadAttention(nn.Module):
         # (B, H, T, d_k) @ (B, H, d_k, T) -> (B, H, T, T)
         scores = torch.matmul(q, k.transpose(-2, -1)) / (self.d_k ** 0.5)
         
-        # NEW：因果掩码
+        # NEW：Apply mask if provided (for padding or future masking)
         if self.is_causal:
             # 这里截取到序列长度，因为有些序列可能比 max_len 短
             scores = scores + self.mask[:, :, :T, :T]
@@ -105,7 +110,7 @@ class FeedForward(nn.Module):
         self.w2 = nn.Linear(hidden_dim, dim, bias=True)
 
     def forward(self, x):
-        # 公式: FFN(x) = W2(ReLU(W1(x)))
+        # FFN(x) = W2(ReLU(W1(x)))
         return self.w2(F.relu(self.w1(x)))
 
 
@@ -120,6 +125,7 @@ class EncoderBlock(nn.Module):
         self.ffn = FeedForward(dim, hidden_dim)  # hidden_dim 默认为 4 * dim
         self.attention_norm = LayerNorm(dim)
         self.ffn_norm = LayerNorm(dim)
+        # self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         """
@@ -155,13 +161,13 @@ class DecoderBlock(nn.Module):
         self.dim = dim
 
         # Decoder 的第一个部分是 Mask Attention，传入 is_causal=True
-        self.mask_attention = MultiHeadAttention(dim, num_heads, is_causal=True)
         # Decoder 的第二个部分是 类似于 Encoder 的 Attention，传入 is_causal=False
-        self.attention = MultiHeadAttention(dim, num_heads, is_causal=False)
+        self.mask_attention = MultiHeadAttention(dim, num_heads, is_causal=True)
+        self.cross_attention = MultiHeadAttention(dim, num_heads, is_causal=False)
         
         self.ffn = FeedForward(dim, hidden_dim)  # hidden_dim 默认为 4 * dim
         self.mask_attention_norm = LayerNorm(dim)
-        self.attention_norm = LayerNorm(dim)
+        self.cross_attention_norm = LayerNorm(dim)
         self.ffn_norm = LayerNorm(dim)
 
     def forward(self, x, encoder_output):
@@ -173,8 +179,8 @@ class DecoderBlock(nn.Module):
         norm_x = self.mask_attention_norm(x)
         x = x + self.mask_attention(norm_x, norm_x, norm_x)  # Pre-Normalization
         # 2. Cross-Attention
-        norm_x = self.attention_norm(x)
-        h2 = x + self.attention(norm_x, encoder_output, encoder_output)
+        norm_x = self.cross_attention_norm(x)
+        h2 = x + self.cross_attention(norm_x, encoder_output, encoder_output)
         # 3. FFN
         out = h2 + self.ffn(self.ffn_norm(h2))  # Pre-Normalization
         return out
@@ -212,6 +218,8 @@ class PositionalEncoding(nn.Module):
         # 分别计算 sin、cos 结果
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
+
+        # Add batch dimension
         pe = pe.unsqueeze(0)  # (1, max_len, d_model)
         # 注册成 buffer，默认不可训练参数
         self.register_buffer('pe', pe)
@@ -219,7 +227,7 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         # 嵌入向量 + 绝对位置编码(标准实现)
         # x: (batch_size, seq_len, d_model)
-        pe = self.pe[:, :x.size(1)].to(dtype=x.dtype)
+        pe = self.pe[:, :x.size(1), :].to(dtype=x.dtype)
         return x + pe
     
     # def forward(self, x):
@@ -229,13 +237,12 @@ class PositionalEncoding(nn.Module):
 
 
 class Transformer(nn.Module):
-    '''整体模型'''
-
     def __init__(self, args):
         super().__init__()
         # 必须输入词表大小和 block size
         assert args.vocab_size is not None
         self.args = args
+
         self.transformer = nn.ModuleDict(dict(
             wte=nn.Embedding(args.vocab_size, args.n_embd),
             wpe=PositionalEncoding(args.dim, args.max_len),
@@ -246,70 +253,29 @@ class Transformer(nn.Module):
         # 最后的线性层，输入是 n_embd，输出是词表大小
         self.lm_head = nn.Linear(args.n_embd, args.vocab_size, bias=False)
 
-        # 初始化所有的权重
-        self.apply(self._init_weights)
-
-        # 查看所有参数的数量
-        print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
-
-    '''统计所有参数的数量'''
-
-    def get_num_params(self, non_embedding=False):
-        # non_embedding: 是否统计 embedding 的参数
-        n_params = sum(p.numel() for p in self.parameters())
-        # 如果不统计 embedding 的参数，就减去
-        if non_embedding:
-            n_params -= self.transformer.wte.weight.numel()
-        return n_params
-
-    '''初始化权重'''
-
-    def _init_weights(self, module):
-        # 线性层和 Embedding 层初始化为正则分布
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
-    '''前向计算函数'''
-
-    def forward(self, idx, targets=None):
-        # 输入为 idx，维度为 (batch size, sequence length, 1)；targets 为目标序列，用于计算 loss
-        device = idx.device
-        b, t = idx.size()
-
-        # 通过 self.transformer
-        # 首先将输入 idx 通过 Embedding 层，得到维度为 (batch size, sequence length, n_embd)
-        print("idx", idx.size())
-        # 通过 Embedding 层
-        tok_emb = self.transformer.wte(idx)
-        print("tok_emb", tok_emb.size())
-        # 然后通过位置编码
+    def forward(self, src_idx, target_idx=None):
+        """
+            src_idx: (batch size, sequence length, 1)
+            target_idx 为目标序列，用于计算 loss
+        """
+        # Apply embedding and positional encoding
+        # -> (batch size, sequence length, n_embd)
+        tok_emb = self.transformer.wte(src_idx)
         pos_emb = self.transformer.wpe(tok_emb)
-        # 再进行 Dropout
         x = self.transformer.drop(pos_emb)
-        # 然后通过 Encoder
-        print("x after wpe:", x.size())
+
+        # Pass through encoder and decoder
         enc_out = self.transformer.encoder(x)
-        print("enc_out:", enc_out.size())
-        # 再通过 Decoder
         x = self.transformer.decoder(x, enc_out)
-        print("x after decoder:", x.size())
 
-        if targets is not None:
+        if target_idx is not None:
             # 训练阶段，如果我们给了 targets，就计算 loss
-            # 先通过最后的 Linear 层，得到维度为 (batch size, sequence length, vocab size)
             logits = self.lm_head(x)
-            # 再跟 targets 计算交叉熵
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_idx.view(-1), ignore_index=-100)
         else:
-            # 推理阶段，我们只需要 logits，loss 为 None
-            # 取 -1 是只取序列中的最后一个作为输出
-            logits = self.lm_head(x[:, [-1], :])  # note: using list [-1] to preserve the time dim
+            # 推理阶段，自回归预测，我们只需要 logits
+            logits = self.lm_head(x[:, [-1], :])  # 取最后一个时间步，同时保留时间维度
             loss = None
-
         return logits, loss
 
 

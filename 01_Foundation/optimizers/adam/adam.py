@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 # 模型定义
@@ -12,9 +13,8 @@ class ToyModel(nn.Module):
         self.w2 = nn.Linear(512, 10, bias = False)
 
     def forward(self, x):
-        hidden = self.w1(x)
-        output = self.w2(hidden)
-        return output, hidden
+        output = self.w2(F.relu(self.w1(x)))
+        return output
 
 
 class MyAdam:
@@ -45,7 +45,6 @@ class MyAdam:
             update = m_hat / (torch.sqrt(v_hat) + self.eps)
             if weight_decay > 0:    # AdamW (Weight Decay 实际上是直接作用于参数，不通过梯度)
                 param.data.mul_(1 - self.lr * weight_decay)
-            # param.data.sub_(self.lr * update)
             param.data -= (self.lr * update)
     
     def zero_grad(self, ):
@@ -57,7 +56,7 @@ class MyAdam:
 def train(rank, model, input, labels, loss_fn, optimizer, epochs):
     for i in range(epochs):
         optimizer.zero_grad()      # 1. 清空梯度
-        outputs, _ = model(input)  # 2. 前向传播
+        outputs = model(input)      # 2. 前向传播
         loss = loss_fn(outputs, labels) # 3. 计算损失
         loss.backward()            # 4. 反向传播 (DDP 在这里进行梯度同步 AllReduce)
         optimizer.step()           # 5. 更新参数

@@ -19,5 +19,6 @@
 2. [datawhalechina](https://github.com/datawhalechina)/[happy-llm](https://github.com/datawhalechina/happy-llm)
 3. [xiaodongguan/MA-RLHF](https://github.com/dhcode-cpp/MA-RLHF/tree/main/lecture)
 4. [rasbt](https://github.com/rasbt)/[LLMs-from-scratch](https://github.com/rasbt/LLMs-from-scratch)
-5. [labml.ai 带注释的 PyTorch 版论文实现](https://nn.labml.ai/zh/index.html)
-6. [duoan/TorchCode](https://github.com/duoan/TorchCode)
+5. [~~labml.ai 带注释的 PyTorch 版论文实现~~](https://nn.labml.ai/zh/index.html)
+6. [deep-ml](https://www.deep-ml.com/collections) 类似于Leetcode一样的刷题网站
+7. [duoan/TorchCode](https://github.com/duoan/TorchCode) 白板手撕 Transformer 面试的刷题平台

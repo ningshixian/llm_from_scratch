@@ -1,17 +1,8 @@
 import torch
 import torch.nn.functional as F
 
+# 温度采样 - 通过温度参数调整概率分布
 def sample(logits, temperature: float = 1.0):
-    """
-    温度采样 - 通过温度参数调整概率分布
-    
-    Args:
-        logits: 模型输出的logits，形状为 [batch_size, vocab_size]
-        temperature: 温度参数，值越大分布越平坦，值越小分布越尖锐
-    
-    Returns:
-        next_token: 采样得到的下一个token id
-    """
     assert temperature > 0, "Temperature must be greater than 0"
     
     logits = logits / max(temperature, 1e-5)

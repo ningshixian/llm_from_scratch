@@ -17,18 +17,20 @@ class PositionalEncoding(nn.Module):
         # 分别计算 sin、cos 结果
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
 
+        # Add batch dimension
+        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
+        # 注册成 buffer，默认不可训练参数
         self.register_buffer('pe', pe)
 
     def forward(self, x):
         # 将位置编码加到 Embedding 结果上
         # x: (batch_size, seq_len, d_model)
-        pe = self.pe[:, :x.size(1)].requires_grad_(False)
+        pe = self.pe[:, :x.size(1)]
         return x + pe
 
 
-def _test_positional_encoding():
+if __name__ == '__main__':
     import numpy as np
     import matplotlib.pyplot as plt
 
@@ -39,7 +41,3 @@ def _test_positional_encoding():
     plt.legend(["dim %d" % p for p in [4, 5, 6, 7]])
     plt.title("Positional encoding")
     plt.show()
-
-
-if __name__ == '__main__':
-    _test_positional_encoding()

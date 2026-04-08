@@ -11,12 +11,12 @@ class MultiHeadAttention(nn.Module):
         self.n_heads = n_heads  # 对应 H
         self.d_k = d_model // n_heads # head_dim
 
-        # 定义 Q, K, V 的线性变换矩阵
+        # Linear projections for Q, K, V
         self.W_q = nn.Linear(d_model, d_model, bias=False)
         self.W_k = nn.Linear(d_model, d_model, bias=False)
         self.W_v = nn.Linear(d_model, d_model, bias=False)
-        # 输出投影层
         self.W_o = nn.Linear(d_model, d_model)
+        
         self.is_causal = is_causal
 
         # 创建一个上三角矩阵，用于因果掩码
