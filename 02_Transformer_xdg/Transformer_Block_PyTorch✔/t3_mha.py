@@ -19,30 +19,21 @@ class MultiHeadAttention(nn.Module):
         
         self.is_causal = is_causal
 
-        # 创建一个上三角矩阵，用于因果掩码
-        if is_causal:
-            # 加性 mask（贴近工程实现）
-            mask = torch.full((1, 1, max_seq_len, max_seq_len), float("-inf"))
-            mask = torch.triu(mask, diagonal=1)
-            # 注册为模型的缓冲区
-            self.register_buffer("mask", mask)
-        
-            # #布尔 mask（偏手撕）
-            # self.register_buffer('mask', torch.triu(torch.ones(max_seq_len, max_seq_len), diagonal=1))
-            # mask = self.mask.bool()[:T, :T]
-            # scores.masked_fill_(mask, -1e9) # float("-inf")
+        # # 注册为模型的缓冲区，用于存储因果掩码
+        # self.register_buffer('mask', torch.tril(torch.ones(max_seq_len, max_seq_len)))  # 下三角
+        # self.register_buffer('mask', torch.triu(torch.ones(max_seq_len, max_seq_len), diagonal=1))  # 上三角
 
     def forward(self, q, k, v):
         # x 维度: [Batch Size, Tokens, d_model]
         B, T, D = q.shape
 
-        # 1. 线性变换得到 QKV，并拆分为多头
+        # =========1. 线性变换得到 QKV，并拆分为多头
         # 维度变化: (B, T, D) -> (B, T, H, d_k)
         q = self.W_q(q).view(B, T, self.n_heads, self.d_k)
         k = self.W_k(k).view(B, T, self.n_heads, self.d_k)
         v = self.W_v(v).view(B, T, self.n_heads, self.d_k)
 
-        # 2. 转置以便后面注意力矩阵乘法
+        # =========2. 转置以便后面注意力矩阵乘法
         # 维度变化: (B, T, H, d_k) -> (B, H, T, d_k)
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
@@ -57,8 +48,8 @@ class MultiHeadAttention(nn.Module):
         
         # NEW：因果掩码
         if self.is_causal:
-            # 这里截取到序列长度，因为有些序列可能比 max_seq_len 短
-            scores = scores + self.mask[:, :, :T, :T]
+            mask = torch.tril(torch.ones(T, T))
+            scores.masked_fill_(mask == 0, float("-inf"))
 
         # 4.分数归一化（Softmax）
         attn_weights = F.softmax(scores, dim=-1) # (B, H, T, T)
@@ -67,7 +58,7 @@ class MultiHeadAttention(nn.Module):
         # (B, H, T, T) @ (B, H, T, d_k) -> (B, H, T, d_k)
         context = torch.matmul(attn_weights, v)
 
-        # 6. 合并多个头的结果
+        # =========6. 合并多个头的结果
         # 先转置回 (B, T, H, d_k)，然后用 contiguous 保证内存连续，最后 view 成 (B, T, D)
         context = context.transpose(1, 2).contiguous().view(B, T, -1)
 

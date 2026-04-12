@@ -1,50 +1,33 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+from typing import Optional
 
-def moe(x: torch.Tensor, We: torch.Tensor, Wg: torch.Tensor, n_experts: int, top_k: int) -> torch.Tensor:
-    """
-    Args:
-        x: Input tensor of shape (n_batch, l_seq, d_model)
-        We: Expert weights of shape (n_experts, d_model, d_model)
-        Wg: Gating weights of shape (d_model, n_experts)
-        n_experts: Number of experts
-        top_k: Number of experts to route each token to
-    Returns:
-        Output tensor of shape (n_batch, l_seq, d_model)
-    """
-    n_batch, l_seq, d_model = x.shape
-    
-    # Flatten batch and sequence dimensions
-    x_flat = x.reshape(-1, d_model)
-    n_tokens = x_flat.shape[0]
-    
-    # Compute gating logits and apply softmax
-    gating_logits = torch.matmul(x_flat, Wg)
-    gating_weights = torch.softmax(gating_logits, dim=-1)
-    
-    # Get top-k experts for each token
-    topk_weights, topk_idx = torch.topk(gating_weights, top_k, dim=-1)
-    
-    # Normalize top-k weights
-    topk_weights_norm = topk_weights / topk_weights.sum(dim=1, keepdim=True)
-    
-    # Flatten for indexing
-    topk_idx_flat = topk_idx.flatten()
-    token_idx_flat = torch.arange(n_tokens, device=x.device).repeat_interleave(top_k)
-    topk_weights_norm_flat = topk_weights_norm.flatten()
-    
-    # Prepare output
-    output_flat = torch.zeros_like(x_flat)
-    
-    # Process each expert
-    for i in range(n_experts):
-        mask = topk_idx_flat == i
-        tokens_expert_i = token_idx_flat[mask]
-        
-        if tokens_expert_i.numel() > 0:
-            x_expert_i = x_flat[tokens_expert_i]
-            output_expert_i = torch.matmul(x_expert_i, We[i])
-            output_expert_i = output_expert_i * topk_weights_norm_flat[mask].unsqueeze(-1)
-            
-            # Scatter add to output
-            output_flat.index_add_(0, tokens_expert_i, output_expert_i)
-    
-    return output_flat.reshape(n_batch, l_seq, d_model)
+class MixtureOfExperts(nn.Module):
+    def __init__(self, d_model, d_ff, num_experts, top_k=2):
+        super().__init__()
+        self.top_k = top_k
+        self.router = nn.Linear(d_model, num_experts)
+        self.experts = nn.ModuleList([
+            nn.Sequential(nn.Linear(d_model, d_ff), nn.ReLU(), nn.Linear(d_ff, d_model))
+            for _ in range(num_experts)
+        ])
+
+    def forward(self, x):
+        orig_shape = x.shape
+        if x.dim() == 3:
+            B, S, D = x.shape
+            x_flat = x.reshape(-1, D)
+        else:
+            x_flat = x
+        logits = self.router(x_flat)
+        top_vals, top_idx = logits.topk(self.top_k, dim=-1)
+        weights = torch.softmax(top_vals, dim=-1)
+        output = torch.zeros_like(x_flat)
+        for k in range(self.top_k):
+            for e in range(len(self.experts)):
+                mask = (top_idx[:, k] == e)
+                if mask.any():
+                    output[mask] += weights[mask, k:k+1] * self.experts[e](x_flat[mask])
+        return output.reshape(orig_shape)

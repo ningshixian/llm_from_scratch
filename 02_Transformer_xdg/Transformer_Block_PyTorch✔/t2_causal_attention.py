@@ -12,8 +12,9 @@ class SelfAttention(nn.Module):
         self.key   = nn.Linear(embed_dim, embed_dim)
         self.value = nn.Linear(embed_dim, embed_dim)
 
-        # ========== NEW：bool mask ==========
-        self.register_buffer('mask', torch.triu(torch.ones(max_seq_len, max_seq_len), diagonal=1))
+        # # 注册为模型的缓冲区，用于存储因果掩码
+        # self.register_buffer('mask', torch.tril(torch.ones(max_seq_len, max_seq_len)))  # 下三角
+        # self.register_buffer('mask', torch.triu(torch.ones(max_seq_len, max_seq_len), diagonal=1))  # 上三角
 
     def forward(self, x):
         # x 维度: (batch_size, seq_len, embed_dim)
@@ -27,15 +28,11 @@ class SelfAttention(nn.Module):
         # 2. 计算注意力得分 (Scores)
         # Q 与 K 的转置相乘，衡量每个词之间的相关性
         # (B, L, D) @ (B, D, L) -> (B, L, L)
-        scores = torch.matmul(Q, K.transpose(-2, -1)) 
-
-        # 3. 缩放 (Scaling)
-        # 防止维度过大导致 Softmax 梯度消失
-        scores = scores / (embed_dim ** 0.5)
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / (embed_dim ** 0.5)
 
         # ========== NEW：因果掩码 ============
-        mask = self.mask.bool()[:seq_len, :seq_len]
-        scores.masked_fill_(mask, -1e9) # float("-inf")
+        mask = torch.tril(torch.ones(seq_len, seq_len))  # (T, T)
+        scores.masked_fill_(mask == 0, float("-inf"))
 
         # 4. 归一化 (Softmax)
         # 在每一行进行 Softmax，使每一行权重和为 1

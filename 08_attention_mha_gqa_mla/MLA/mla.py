@@ -24,8 +24,9 @@ class MultiHeadsLatentAttention(nn.Module):
         self.out_proj = nn.Linear(dim, dim, bias=False)
         self.dropout = nn.Dropout(0.1)
 
-        # 注册因果掩码 (防止当前位置看到未来的 token)
-        self.register_buffer("mask", torch.triu(torch.ones(context_length, context_length), diagonal=1))
+        # # 注册为模型的缓冲区，用于存储因果掩码
+        # self.register_buffer('mask', torch.tril(torch.ones(max_seq_len, max_seq_len)))  # 下三角
+        # self.register_buffer('mask', torch.triu(torch.ones(max_seq_len, max_seq_len), diagonal=1))  # 上三角
 
     def forward(self, x):
         b, t, d = x.shape
@@ -44,8 +45,8 @@ class MultiHeadsLatentAttention(nn.Module):
         attn_weights = (queries @ keys.transpose(-2, -1)) / math.sqrt(self.head_dim)
         
         # 4. 应用因果掩码 (将未来位置的分数设为负无穷)
-        mask_bool = self.mask.bool()[:t, :t]
-        attn_weights = attn_weights.masked_fill_(mask_bool, -torch.inf)
+        mask = torch.tril(torch.ones(t, t))
+        attn_weights.masked_fill_(mask == 0, float("-inf"))
         
         attn_probs = F.softmax(attn_weights, dim=-1)
         attn_probs = self.dropout(attn_probs)

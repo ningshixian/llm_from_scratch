@@ -1,32 +1,12 @@
-import numpy as np
+# import numpy as np
+import torch
 
-def layernorm(x: np.ndarray, eps: float = 1e-5) -> np.ndarray:
-    """
-    Apply LayerNorm to the input array.
-
-    Parameters:
-        x   : np.ndarray of shape (batch_size, features)
-        eps : float - small constant for numerical stability
-
-    Returns:
-        np.ndarray of same shape as x
-    """
-    mean = np.mean(x, axis=-1, keepdims=True)
-    var = np.var(x, axis=-1, keepdims=True)
-    return (x - mean) / np.sqrt(var + eps)
+def layernorm(x, eps=1e-5):
+    mean = torch.mean(x, axis=-1, keepdims=True)
+    var = torch.var(x, axis=-1, keepdims=True, correction=0)
+    return (x - mean) / torch.sqrt(var + eps)
 
 
-def rmsnorm(x: np.ndarray, g: np.ndarray, eps: float = 1e-5) -> np.ndarray:
-    """
-    Apply RMSNorm to the input array.
-    
-    Parameters:
-        x   : np.ndarray of shape (batch_size, features)
-        g   : np.ndarray of shape (features,) - gain parameter
-        eps : float - small constant for numerical stability
-    
-    Returns:
-        np.ndarray of same shape as x
-    """
-    rms = np.sqrt(np.mean(x ** 2, axis=-1, keepdims=True) + eps)
-    return (x / rms) * g
+def rmsnorm(x: torch.Tensor, eps: float = 1e-5):
+    rms = torch.sqrt(torch.mean(x ** 2, axis=-1, keepdims=True) + eps)
+    return x / rms
