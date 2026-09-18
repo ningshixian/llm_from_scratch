@@ -257,7 +257,7 @@ class SparseMoELanguageModel(nn.Module):
             # append sampled index to the running sequence
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
-      
+
 
 def kaiming_init_weights(m):
     if isinstance (m, (nn.Linear)):
